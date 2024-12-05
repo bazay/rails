@@ -2109,6 +2109,16 @@ class PerformedJobsTest < ActiveJob::TestCase
 
       assert_equal 2, queue_adapter.performed_jobs.count
     end
+
+    test "TestAdapter respect max attempts and is silent" do
+      perform_enqueued_jobs(only: RaisingJob) do
+        assert_nothing_raised do
+          RaisingJob.perform_later("RaisingJob::SilencedError")
+        end
+      end
+
+      assert_equal 2, queue_adapter.performed_jobs.count
+    end
   end
 end
 

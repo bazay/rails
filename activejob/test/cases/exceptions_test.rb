@@ -3,8 +3,10 @@
 require "helper"
 require "jobs/retry_job"
 require "jobs/after_discard_retry_job"
+require "jobs/after_silence_retry_job"
 require "models/person"
 require "minitest/mock"
+require "pry"
 
 class ExceptionsTest < ActiveSupport::TestCase
   class << self
@@ -376,6 +378,22 @@ class ExceptionsTest < ActiveSupport::TestCase
       expected_array = [
         "Dealt with a job that was discarded in a custom way. Message: AfterDiscardRetryJob::CustomDiscardableError",
         "Ran after_discard for job. Message: AfterDiscardRetryJob::CustomDiscardableError"
+      ]
+      assert_equal expected_array, JobBuffer.values.last(2)
+    end
+
+    test "#after_silence is run when a job is silenced via #silence_on" do
+      AfterSilenceRetryJob.perform_later("AfterSilenceRetryJob::SilenceableError")
+
+      assert_equal "Ran after_silence for job. Message: AfterSilenceRetryJob::SilenceableError", JobBuffer.last_value
+    end
+
+    test "#after_silence is run when a job is silenced via #silence_on with a block passed to #silence_on" do
+      AfterSilenceRetryJob.perform_later("AfterSilenceRetryJob::CustomSilenceableError")
+
+      expected_array = [
+        "Dealt with a job that was silenced in a custom way. Message: AfterSilenceRetryJob::CustomSilenceableError",
+        "Ran after_silence for job. Message: AfterSilenceRetryJob::CustomSilenceableError"
       ]
       assert_equal expected_array, JobBuffer.values.last(2)
     end

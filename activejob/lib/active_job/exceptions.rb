@@ -10,6 +10,8 @@ module ActiveJob
     included do
       class_attribute :retry_jitter, instance_accessor: false, instance_predicate: false, default: 0.0
       class_attribute :after_discard_procs, default: []
+      class_attribute :after_silence_procs, default: []
+      class_attribute :silent_exceptions, instance_accessor: false, instance_predicate: false, default: []
     end
 
     module ClassMethods
@@ -61,20 +63,24 @@ module ActiveJob
       #  end
       def retry_on(*exceptions, wait: 3.seconds, attempts: 5, queue: nil, priority: nil, jitter: JITTER_DEFAULT)
         rescue_from(*exceptions) do |error|
-          executions = executions_for(exceptions)
-          if attempts == :unlimited || executions < attempts
-            retry_job wait: determine_delay(seconds_or_duration_or_algorithm: wait, executions: executions, jitter: jitter), queue: queue, priority: priority, error: error
-          else
-            if block_given?
-              instrument :retry_stopped, error: error do
-                yield self, error
-              end
-              run_after_discard_procs(error)
+          begin
+            executions = executions_for(exceptions)
+            if attempts == :unlimited || executions < attempts
+              retry_job wait: determine_delay(seconds_or_duration_or_algorithm: wait, executions: executions, jitter: jitter), queue: queue, priority: priority, error: error
             else
-              instrument :retry_stopped, error: error
-              run_after_discard_procs(error)
-              raise error
+              if block_given?
+                instrument :retry_stopped, error: error do
+                  yield self, error
+                end
+                run_after_discard_procs(error)
+              else
+                instrument :retry_stopped, error: error
+                run_after_discard_procs(error)
+                raise error
+              end
             end
+          rescue *self.class.silent_exceptions
+            run_after_silence_procs(error)
           end
         end
       end
@@ -123,6 +129,16 @@ module ActiveJob
       #  end
       def after_discard(&blk)
         self.after_discard_procs += [blk]
+      end
+
+      def silence_on(*exceptions, &blk)
+        self.silent_exceptions.concat(exceptions).uniq!
+
+        self.after_silence_procs += [blk] if block_given?
+      end
+
+      def after_silence(&blk)
+        self.after_silence_procs += [blk]
       end
     end
 
@@ -194,8 +210,16 @@ module ActiveJob
       end
 
       def run_after_discard_procs(exception)
+        run_after_procs(after_discard_procs, exception)
+      end
+
+      def run_after_silence_procs(exception)
+        run_after_procs(after_silence_procs, exception)
+      end
+
+      def run_after_procs(after_procs, exception)
         exceptions = []
-        after_discard_procs.each do |blk|
+        after_procs.each do |blk|
           instance_exec(self, exception, &blk)
         rescue StandardError => e
           exceptions << e
